@@ -18,11 +18,11 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'djscott2026';
 const PDF_PATH = path.join(__dirname, 'ADHD_Cognitive_Codex.pdf');
 const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL || 'dj@djscottconsulting.com';
 const SMTP_HOST = process.env.SMTP_HOST || '';
-const SMTP_PORT = process.env.SMTP_PORT || '587';
+const SMTP_PORT = process.env.SMTP_PORT || '465';
 const SMTP_USER = process.env.SMTP_USER || ''
 const SMTP_PASS = process.env.SMTP_PASS || '';
 
-// ── Download tokens (valid for 30 minutes) ──
+// ââ Download tokens (valid for 30 minutes) ââ
 const downloadTokens = new Map();
 function createDownloadToken() {
   const token = crypto.randomBytes(24).toString('hex');
@@ -40,7 +40,7 @@ setInterval(() => {
   for (const [t, exp] of downloadTokens) { if (now > exp) downloadTokens.delete(t); }
 }, 10 * 60 * 1000);
 
-// ── Simple JSON database ──
+// ââ Simple JSON database ââ
 function loadDB() {
   try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf-8')); }
   catch { return { subscribers: [] }; }
@@ -50,18 +50,17 @@ function saveDB(data) {
 }
 if (!fs.existsSync(DB_FILE)) saveDB({ subscribers: [] });
 
-// ── Email notification (SMTP via raw TLS) ──
+// —— Email notification (SMTP via direct TLS) ——
 function sendNotification(subscriberEmail) {
   if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
     console.log('[EMAIL] SMTP not configured. Would notify ' + NOTIFY_EMAIL + ' about new subscriber: ' + subscriberEmail);
     return;
   }
   const tls = require('tls');
-  const net = require('net');
   const from = SMTP_USER;
   const to = NOTIFY_EMAIL;
   const subject = 'New ADHD Codex Subscriber: ' + subscriberEmail;
-  const body = 'New subscriber on ADHD Cognitive Codex landing page:\n\nEmail: ' + subscriberEmail + '\nTime: ' + new Date().toISOString() + '\n\n-- DJ Scott Consulting';
+  const body = 'New subscriber on ADHD Cognitive Codex landing page:\n\nEmail: ' + subscriberEmail + '\nTime: ' + new Date().toISOString() + '\n\n\u2014 DJ Scott Consulting';
 
   const commands = [
     'EHLO adhd-codex',
@@ -76,22 +75,24 @@ function sendNotification(subscriberEmail) {
   ];
 
   let step = 0;
-  const sock = net.createConnection(parseInt(SMTP_PORT), SMTP_HOST, () => {});
+  const sock = tls.connect(465, SMTP_HOST, { rejectUnauthorized: true }, () => {
+    console.log('[EMAIL] TLS connected to ' + SMTP_HOST + ':465');
+  });
   sock.setEncoding('utf-8');
   sock.on('data', (data) => {
-    if (data.startsWith('220') && step === 0) {
-      sock.write(commands[step++] + '\r\n');
-    } else if (data.includes('STARTTLS')) {
-      sock.write('STARTTLS\r\n');
-    } else if (step < commands.length) {
+    if (step < commands.length) {
       sock.write(commands[step++] + '\r\n');
     }
+    if (data.includes('221')) {
+      console.log('[EMAIL] Notification sent to ' + to + ' about ' + subscriberEmail);
+      sock.destroy();
+    }
   });
-  sock.on('error', (err) => console.error('[EMAIL] Error:', err.message));
-  sock.setTimeout(10000, () => sock.destroy());
+  sock.on('error', (err) => console.error('[EMAIL] Error:', err.message || err));
+  sock.setTimeout(15000, () => { console.error('[EMAIL] Timeout'); sock.destroy(); });
 }
 
-// ── MIME types ──
+// ââ MIME types ââ
 const MIME = {
   '.html': 'text/html',
   '.css':  'text/css',
@@ -103,7 +104,7 @@ const MIME = {
   '.ico':  'image/x-icon',
 };
 
-// ── Helpers ──
+// ââ Helpers ââ
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -117,18 +118,18 @@ function json(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
-// ── Server ──
+// ââ Server ââ
 const server = http.createServer(async (req, res) => {
   const parsed = url.parse(req.url, true);
   const pathname = parsed.pathname;
 
-  // ── Block direct PDF access ──
+  // ââ Block direct PDF access ââ
   if (pathname.toLowerCase().endsWith('.pdf') && pathname !== '/download') {
     res.writeHead(403);
     return res.end('Access denied. Subscribe to download.');
   }
 
-  // ── POST /api/subscribe ──
+  // ââ POST /api/subscribe ââ
   if (req.method === 'POST' && pathname === '/api/subscribe') {
     try {
       const raw = await readBody(req);
@@ -168,7 +169,7 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // ── GET /download?token=xxx ──
+  // ââ GET /download?token=xxx ââ
   if (req.method === 'GET' && pathname === '/download') {
     const token = parsed.query.token;
     if (!token || !isValidToken(token)) {
@@ -196,7 +197,7 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // ── GET /api/admin/subscribers ──
+  // ââ GET /api/admin/subscribers ââ
   if (req.method === 'GET' && pathname === '/api/admin/subscribers') {
     if (parsed.query.token !== ADMIN_TOKEN)
       return json(res, 401, { error: 'Unauthorized' });
@@ -204,7 +205,7 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { total: db.subscribers.length, subscribers: [...db.subscribers].reverse() });
   }
 
-  // ── GET /api/admin/export (CSV) ──
+  // ââ GET /api/admin/export (CSV) ââ
   if (req.method === 'GET' && pathname === '/api/admin/export') {
     if (parsed.query.token !== ADMIN_TOKEN)
       return json(res, 401, { error: 'Unauthorized' });
@@ -220,7 +221,7 @@ const server = http.createServer(async (req, res) => {
     return res.end(csv);
   }
 
-  // ── Static files ──
+  // ââ Static files ââ
   let filePath = pathname === '/' ? '/index.html' : pathname;
   filePath = path.join(__dirname, filePath);
 
