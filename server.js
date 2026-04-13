@@ -29,7 +29,7 @@ function createDownloadToken() {
   downloadTokens.set(token, Date.now() + 30 * 60 * 1000);
   return token;
 }
-function isValidToken(token) {
+function isValidToken(token) 
   const expires = downloadTokens.get(token);
   if (!expires) return false;
   if (Date.now() > expires) { downloadTokens.delete(token); return false; }
@@ -138,7 +138,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: 'Email is required.' });
 
       const cleaned = email.trim().toLowerCase();
-      if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(cleaned))
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned))
         return json(res, 400, { error: 'Please enter a valid email address.' });
 
       const db = loadDB();
