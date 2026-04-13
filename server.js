@@ -29,7 +29,7 @@ function createDownloadToken() {
   downloadTokens.set(token, Date.now() + 30 * 60 * 1000);
   return token;
 }
-function isValidToken(token) 
+function isValidToken(token)  {
   const expires = downloadTokens.get(token);
   if (!expires) return false;
   if (Date.now() > expires) { downloadTokens.delete(token); return false; }
