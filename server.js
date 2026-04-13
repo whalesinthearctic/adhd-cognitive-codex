@@ -18,7 +18,7 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'djscott2026';
 const PDF_PATH = path.join(__dirname, 'ADHD_Cognitive_Codex.pdf');
 const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL || 'dj@djscottconsulting.com';
 const SMTP_HOST = process.env.SMTP_HOST || '';
-const SMTP_PORT = process.env.SMTP_PORT || '465';
+const SMTP_PORT = process.env.SMTP_PORT || '587';
 const SMTP_USER = process.env.SMTP_USER || ''
 const SMTP_PASS = process.env.SMTP_PASS || '';
 
@@ -50,19 +50,20 @@ function saveDB(data) {
 }
 if (!fs.existsSync(DB_FILE)) saveDB({ subscribers: [] });
 
-// —— Email notification (SMTP via direct TLS) ——
+// —— Email notification (SMTP via STARTTLS on port 587) ——
 function sendNotification(subscriberEmail) {
   if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
     console.log('[EMAIL] SMTP not configured. Would notify ' + NOTIFY_EMAIL + ' about new subscriber: ' + subscriberEmail);
     return;
   }
+  const net = require('net');
   const tls = require('tls');
   const from = SMTP_USER;
   const to = NOTIFY_EMAIL;
   const subject = 'New ADHD Codex Subscriber: ' + subscriberEmail;
   const body = 'New subscriber on ADHD Cognitive Codex landing page:\n\nEmail: ' + subscriberEmail + '\nTime: ' + new Date().toISOString() + '\n\n\u2014 DJ Scott Consulting';
 
-  const commands = [
+  const mailCommands = [
     'EHLO adhd-codex',
     'AUTH LOGIN',
     Buffer.from(from).toString('base64'),
@@ -74,25 +75,55 @@ function sendNotification(subscriberEmail) {
     'QUIT'
   ];
 
-  let step = 0;
-  const sock = tls.connect(465, SMTP_HOST, { rejectUnauthorized: true }, () => {
-    console.log('[EMAIL] TLS connected to ' + SMTP_HOST + ':465');
+  // State machine: 0=wait greeting, 1=sent EHLO wait 250, 2=sent STARTTLS wait 220, 3=TLS auth
+  let state = 0;
+  let cmdIdx = 0;
+
+  const sock = net.createConnection(parseInt(SMTP_PORT) || 587, SMTP_HOST, () => {
+    console.log('[EMAIL] Connected to ' + SMTP_HOST + ':' + SMTP_PORT);
   });
   sock.setEncoding('utf-8');
+
   sock.on('data', (data) => {
-    if (step < commands.length) {
-      sock.write(commands[step++] + '\r\n');
-    }
-    if (data.includes('221')) {
-      console.log('[EMAIL] Notification sent to ' + to + ' about ' + subscriberEmail);
-      sock.destroy();
+    const lines = data.trim();
+    console.log('[EMAIL] [state=' + state + '] S: ' + lines.substring(0, 120));
+
+    if (state === 0 && lines.startsWith('220')) {
+      // Got greeting, send EHLO
+      state = 1;
+      sock.write('EHLO adhd-codex\r\n');
+    } else if (state === 1 && lines.includes('250')) {
+      // Got EHLO response, send STARTTLS
+      state = 2;
+      sock.write('STARTTLS\r\n');
+    } else if (state === 2 && lines.startsWith('220')) {
+      // STARTTLS accepted, upgrade socket to TLS
+      state = 3;
+      const tlsSock = tls.connect({ socket: sock, host: SMTP_HOST }, () => {
+        console.log('[EMAIL] TLS handshake complete');
+        // Send first command (EHLO) on TLS socket
+        tlsSock.write(mailCommands[cmdIdx++] + '\r\n');
+      });
+      tlsSock.setEncoding('utf-8');
+      tlsSock.on('data', (d) => {
+        console.log('[EMAIL] TLS S: ' + d.trim().substring(0, 120));
+        if (d.includes('221')) {
+          console.log('[EMAIL] Notification sent to ' + to + ' about ' + subscriberEmail);
+          tlsSock.destroy();
+          return;
+        }
+        if (cmdIdx < mailCommands.length) {
+          tlsSock.write(mailCommands[cmdIdx++] + '\r\n');
+        }
+      });
+      tlsSock.on('error', (err) => console.error('[EMAIL] TLS Error:', err.message || err));
     }
   });
+
   sock.on('error', (err) => console.error('[EMAIL] Error:', err.message || err));
   sock.setTimeout(15000, () => { console.error('[EMAIL] Timeout'); sock.destroy(); });
 }
 
-// ââ MIME types ââ
 const MIME = {
   '.html': 'text/html',
   '.css':  'text/css',
