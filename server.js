@@ -19,7 +19,7 @@ const PDF_PATH = path.join(__dirname, 'ADHD_Cognitive_Codex.pdf');
 const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL || 'dj@djscottconsulting.com';
 const SMTP_HOST = process.env.SMTP_HOST || '';
 const SMTP_PORT = process.env.SMTP_PORT || '587';
-const SMTP_USER = process.env.SMTP_USER || '';
+const SMTP_USER = process.env.SMTP_USER || ''
 const SMTP_PASS = process.env.SMTP_PASS || '';
 
 // ── Download tokens (valid for 30 minutes) ──
