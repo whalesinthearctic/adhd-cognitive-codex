@@ -17,10 +17,7 @@ const DB_FILE = path.join(__dirname, 'emails.json');
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'djscott2026';
 const PDF_PATH = path.join(__dirname, 'ADHD_Cognitive_Codex.pdf');
 const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL || 'dj@djscottconsulting.com';
-const SMTP_HOST = process.env.SMTP_HOST || '';
-const SMTP_PORT = process.env.SMTP_PORT || '587';
-const SMTP_USER = process.env.SMTP_USER || ''
-const SMTP_PASS = process.env.SMTP_PASS || '';
+const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
 
 // ââ Download tokens (valid for 30 minutes) ââ
 const downloadTokens = new Map();
@@ -50,78 +47,48 @@ function saveDB(data) {
 }
 if (!fs.existsSync(DB_FILE)) saveDB({ subscribers: [] });
 
-// —— Email notification (SMTP via STARTTLS on port 587) ——
+// —— Email notification (via Brevo HTTP API) ——
 function sendNotification(subscriberEmail) {
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    console.log('[EMAIL] SMTP not configured. Would notify ' + NOTIFY_EMAIL + ' about new subscriber: ' + subscriberEmail);
+  if (!BREVO_API_KEY) {
+    console.log('[EMAIL] Brevo API key not configured. Would notify ' + NOTIFY_EMAIL + ' about new subscriber: ' + subscriberEmail);
     return;
   }
-  const net = require('net');
-  const tls = require('tls');
-  const from = SMTP_USER;
-  const to = NOTIFY_EMAIL;
-  const subject = 'New ADHD Codex Subscriber: ' + subscriberEmail;
-  const body = 'New subscriber on ADHD Cognitive Codex landing page:\n\nEmail: ' + subscriberEmail + '\nTime: ' + new Date().toISOString() + '\n\n\u2014 DJ Scott Consulting';
-
-  const mailCommands = [
-    'EHLO adhd-codex',
-    'AUTH LOGIN',
-    Buffer.from(from).toString('base64'),
-    Buffer.from(SMTP_PASS).toString('base64'),
-    'MAIL FROM:<' + from + '>',
-    'RCPT TO:<' + to + '>',
-    'DATA',
-    'From: ' + from + '\r\nTo: ' + to + '\r\nSubject: ' + subject + '\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n' + body + '\r\n.',
-    'QUIT'
-  ];
-
-  // State machine: 0=wait greeting, 1=sent EHLO wait 250, 2=sent STARTTLS wait 220, 3=TLS auth
-  let state = 0;
-  let cmdIdx = 0;
-
-  const sock = net.createConnection(parseInt(SMTP_PORT) || 587, SMTP_HOST, () => {
-    console.log('[EMAIL] Connected to ' + SMTP_HOST + ':' + SMTP_PORT);
+  const https = require('https');
+  const postData = JSON.stringify({
+    sender: { name: 'DJ Scott Consulting', email: NOTIFY_EMAIL },
+    to: [{ email: NOTIFY_EMAIL }],
+    subject: 'New ADHD Codex Subscriber: ' + subscriberEmail,
+    textContent: 'New subscriber on ADHD Cognitive Codex landing page:\n\nEmail: ' + subscriberEmail + '\nTime: ' + new Date().toISOString() + '\n\n— DJ Scott Consulting'
   });
-  sock.setEncoding('utf-8');
 
-  sock.on('data', (data) => {
-    const lines = data.trim();
-    console.log('[EMAIL] [state=' + state + '] S: ' + lines.substring(0, 120));
-
-    if (state === 0 && lines.startsWith('220')) {
-      // Got greeting, send EHLO
-      state = 1;
-      sock.write('EHLO adhd-codex\r\n');
-    } else if (state === 1 && lines.includes('250')) {
-      // Got EHLO response, send STARTTLS
-      state = 2;
-      sock.write('STARTTLS\r\n');
-    } else if (state === 2 && lines.startsWith('220')) {
-      // STARTTLS accepted, upgrade socket to TLS
-      state = 3;
-      const tlsSock = tls.connect({ socket: sock, host: SMTP_HOST }, () => {
-        console.log('[EMAIL] TLS handshake complete');
-        // Send first command (EHLO) on TLS socket
-        tlsSock.write(mailCommands[cmdIdx++] + '\r\n');
-      });
-      tlsSock.setEncoding('utf-8');
-      tlsSock.on('data', (d) => {
-        console.log('[EMAIL] TLS S: ' + d.trim().substring(0, 120));
-        if (d.includes('221')) {
-          console.log('[EMAIL] Notification sent to ' + to + ' about ' + subscriberEmail);
-          tlsSock.destroy();
-          return;
-        }
-        if (cmdIdx < mailCommands.length) {
-          tlsSock.write(mailCommands[cmdIdx++] + '\r\n');
-        }
-      });
-      tlsSock.on('error', (err) => console.error('[EMAIL] TLS Error:', err.message || err));
+  const options = {
+    hostname: 'api.brevo.com',
+    port: 443,
+    path: '/v3/smtp/email',
+    method: 'POST',
+    headers: {
+      'accept': 'application/json',
+      'api-key': BREVO_API_KEY,
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(postData)
     }
-  });
+  };
 
-  sock.on('error', (err) => console.error('[EMAIL] Error:', err.message || err));
-  sock.setTimeout(15000, () => { console.error('[EMAIL] Timeout'); sock.destroy(); });
+  const req = https.request(options, (res) => {
+    let body = '';
+    res.on('data', (chunk) => body += chunk);
+    res.on('end', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        console.log('[EMAIL] Notification sent to ' + NOTIFY_EMAIL + ' about ' + subscriberEmail);
+      } else {
+        console.error('[EMAIL] Brevo API error ' + res.statusCode + ': ' + body);
+      }
+    });
+  });
+  req.on('error', (err) => console.error('[EMAIL] Error:', err.message || err));
+  req.setTimeout(15000, () => { console.error('[EMAIL] Timeout'); req.destroy(); });
+  req.write(postData);
+  req.end();
 }
 
 const MIME = {
@@ -285,7 +252,7 @@ server.listen(PORT, () => {
 \u2551   http://localhost:${PORT}                           \u2551
 \u2551   Subscribers: ${String(db.subscribers.length).padEnd(33)}\u2551
 \u2551   Notify: ${NOTIFY_EMAIL.padEnd(38)}\u2551
-\u2551   SMTP: ${SMTP_HOST ? 'configured' : 'not set (console only)'}\u2551
+\u2551   Email: ${BREVO_API_KEY ? 'Brevo configured' : 'not set (console only)'}\u2551
 \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d
   `);
 });
