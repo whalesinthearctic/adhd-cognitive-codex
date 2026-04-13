@@ -1,0 +1,10 @@
+{
+    "name": "adhd-codex-landing",
+    "version": "1.0.0",
+    "description": "Landing page for The ADHD Cognitive Codex - DJ Scott Consulting",
+    "main": "server.js",
+    "scripts": {
+          "start": "node server.js"
+    },
+    "dependencies": {}
+}
